@@ -2,6 +2,8 @@
 
 An Omarchy shell bar widget that tracks one flight by its number.
 
+![Flight Monitor popup](docs/screenshot.png)
+
 Click the plane icon in the bar, type a flight number such as `LA3195`
 (or an ICAO callsign such as `TAM3195`) and press Enter. The popup shows:
 
@@ -22,6 +24,48 @@ Click the plane icon in the bar, type a flight number such as `LA3195`
 
 The tracked flight is stored in `~/.config/omarchy/shell.json`, so it
 survives shell restarts. Clear it with the ✕ next to the field.
+
+## Requirements
+
+- Omarchy with `omarchy-shell` (the Quickshell-based bar)
+- `curl` (ships with Omarchy) and internet access
+- No API keys, no sudo, no install hooks, no extra packages
+
+## Installation
+
+```bash
+omarchy plugin add https://github.com/maluta/flight.monitor.git --enable
+```
+
+`--enable` places the plane icon in the bar's right section. Move it with:
+
+```bash
+omarchy bar move flight.monitor --section center
+```
+
+Manual install, without the plugin manager: clone this repository into
+`~/.config/omarchy/plugins/flight.monitor/`, then run
+`omarchy-shell shell rescanPlugins` and `omarchy plugin enable flight.monitor right`.
+
+Update later with `omarchy plugin update flight.monitor`.
+
+## Removal
+
+```bash
+omarchy plugin remove flight.monitor
+```
+
+This deletes the plugin directory and takes the widget out of the bar. To
+keep the files but hide the widget, use `omarchy plugin disable flight.monitor`
+instead.
+
+## What it writes
+
+The only thing the plugin writes is the flight number, into its own layout
+entry in `~/.config/omarchy/shell.json` (`{ "id": "flight.monitor", "flight": "LA3195" }`),
+and only when you press Enter in the field, clear it with ✕, or call the
+`track`/`clear` IPC commands. It never touches any other file, and removing
+the plugin removes that entry with it.
 
 ## Bar icon
 
@@ -80,6 +124,10 @@ A flight number is an IATA code (`LA3195`) while the aircraft broadcasts an
 ICAO callsign (`TAM3195`). Airline groups use several callsign prefixes for
 one IATA code, so the callsign lookup walks a short candidate list (see
 `CALLSIGN_PREFIXES` in `Model.js`) and remembers whichever answered.
+
+The Flightradar24 endpoints are unofficial and may change or stop answering
+without notice. When they do, the widget falls back to adsbdb + adsb.lol:
+route and live position still work, but scheduled times and status do not.
 
 ## Files
 
