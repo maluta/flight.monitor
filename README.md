@@ -91,3 +91,8 @@ one IATA code, so the callsign lookup walks a short candidate list (see
   (public domain), outer rings simplified to ~2,000 points. Regenerate by
   fetching `ne_110m_land.geojson` from github.com/nvkelso/natural-earth-vector
   and running Douglas-Peucker at 0.35° on each outer ring
+
+## License
+
+MIT, see `LICENSE`. Land outlines in `World.js` are derived from Natural
+Earth, which is in the public domain.
