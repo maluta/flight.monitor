@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "flight.monitor",
+  "name": "Flight Monitor",
+  "version": "1.0.0",
+  "author": "maluta",
+  "description": "Track a flight by number: route, live position, altitude, speed and ETA",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Flight Monitor",
+    "description": "Plane icon with a popup that tracks one flight from A to B",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "flight": "",
+      "refreshSeconds": 60
+    },
+    "schema": [
+      { "key": "flight", "type": "string", "label": "Flight number" },
+      { "key": "refreshSeconds", "type": "number", "label": "Refresh interval (seconds)" }
+    ]
+  }
+}
