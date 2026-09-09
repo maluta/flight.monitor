@@ -23,8 +23,8 @@ import "World.js" as World
 // lookup walks a short candidate list and remembers the winner.
 Panel {
   id: root
-  moduleName: "flight.monitor"
-  ipcTarget: "flight.monitor"
+  moduleName: "io.github.maluta.flight-monitor"
+  ipcTarget: "io.github.maluta.flight-monitor"
   manageIpc: false
 
   property var anchorItem: null
@@ -274,10 +274,38 @@ Panel {
     else afterSchedule()
   }
 
+  // ---- Bounded fetches.
+  //
+  // Every response is capped at the producer: curl refuses a body whose
+  // announced size is over the limit, and head cuts a chunked one at
+  // limit + 1 bytes. A body that arrives at limit + 1 is an overflow and is
+  // dropped unparsed (readBounded returns null), so a hostile or broken
+  // endpoint can at most cost one wasted poll. Arguments reach the shell
+  // as positional parameters, never spliced into the command text, and
+  // only https without redirects is allowed.
+  readonly property int scheduleMaxBytes: 1024 * 1024
+  readonly property int routeMaxBytes: 256 * 1024
+  readonly property int liveMaxBytes: 512 * 1024
+  readonly property int trailMaxBytes: 4 * 1024 * 1024
+
+  function fetchCommand(url, agent, maxTime, maxBytes) {
+    return ["/usr/bin/sh", "-c",
+      '/usr/bin/curl -sS --proto =https --max-time "$1" --max-filesize "$2" -A "$3" -- "$4" | /usr/bin/head -c "$5"',
+      "sh", String(maxTime), String(maxBytes), agent, url, String(maxBytes + 1)]
+  }
+
+  // The collector's text, or null when the body hit the cap.
+  function readBounded(collector, maxBytes) {
+    var size = collector.data ? collector.data.byteLength : 0
+    if (size > maxBytes) return null
+    return String(collector.text || "").trim()
+  }
+
   function startSchedule() {
     scheduleStatus = "loading"
-    scheduleProc.command = ["curl", "-sS", "--max-time", "10", "-A", browserAgent,
-      "https://api.flightradar24.com/common/v1/flight/list.json?query=" + flightCode + "&fetchBy=flight&limit=25&page=1"]
+    scheduleProc.command = fetchCommand(
+      "https://api.flightradar24.com/common/v1/flight/list.json?query=" + flightCode + "&fetchBy=flight&limit=25&page=1",
+      browserAgent, 10, scheduleMaxBytes)
     scheduleProc.running = true
   }
 
@@ -290,8 +318,7 @@ Panel {
 
   function startRoute() {
     routeStatus = "loading"
-    routeProc.command = ["curl", "-sS", "--max-time", "8", "-A", userAgent,
-      "https://api.adsbdb.com/v0/callsign/" + flightCode]
+    routeProc.command = fetchCommand("https://api.adsbdb.com/v0/callsign/" + flightCode, userAgent, 8, routeMaxBytes)
     routeProc.running = true
   }
 
@@ -307,7 +334,7 @@ Panel {
     }
     if (restart) {
       var list = []
-      if (schedule && schedule.hex) list.push({ kind: "hex", value: schedule.hex })
+      if (schedule && schedule.hex !== "") list.push({ kind: "hex", value: schedule.hex })
       var callsigns = Model.liveCallsignCandidates(flightCode, route, liveCallsign, schedule)
       for (var i = 0; i < callsigns.length; i++) list.push({ kind: "callsign", value: callsigns[i] })
       candidates = list
@@ -321,8 +348,9 @@ Panel {
     }
     if (!adsbLive) liveStatus = "loading"
     var candidate = candidates[candidateIndex]
-    liveProc.command = ["curl", "-sS", "--max-time", "8", "-A", userAgent,
-      "https://api.adsb.lol/v2/" + (candidate.kind === "hex" ? "hex/" : "callsign/") + candidate.value]
+    liveProc.command = fetchCommand(
+      "https://api.adsb.lol/v2/" + (candidate.kind === "hex" ? "hex/" : "callsign/") + candidate.value,
+      userAgent, 8, liveMaxBytes)
     liveProc.running = true
   }
 
@@ -332,8 +360,9 @@ Panel {
       trailPoints = []
       return
     }
-    trailProc.command = ["curl", "-sS", "--max-time", "10", "-A", browserAgent,
-      "https://data-live.flightradar24.com/clickhandler/?flight=" + schedule.flightId + "&version=1.5"]
+    trailProc.command = fetchCommand(
+      "https://data-live.flightradar24.com/clickhandler/?flight=" + schedule.flightId + "&version=1.5",
+      browserAgent, 10, trailMaxBytes)
     trailProc.running = true
   }
 
@@ -344,7 +373,9 @@ Panel {
     id: scheduleProc
     stdout: StdioCollector { id: scheduleOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var raw = String(scheduleOut.text || "").trim()
+      var raw = root.readBounded(scheduleOut, root.scheduleMaxBytes)
+      // Overflow counts as an unusable body, not as the network being down.
+      if (raw === null) raw = "overflow"
       var parsed = raw === "" ? null : Model.parseSchedule(raw, root.nowSeconds)
       if (parsed) {
         root.schedule = parsed
@@ -365,7 +396,8 @@ Panel {
     id: routeProc
     stdout: StdioCollector { id: routeOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var raw = String(routeOut.text || "").trim()
+      var raw = root.readBounded(routeOut, root.routeMaxBytes)
+      if (raw === null) raw = "overflow"
       if (raw === "") {
         root.routeStatus = "offline"
         if (!root.route) retryTimer.restart()
@@ -388,7 +420,8 @@ Panel {
     id: liveProc
     stdout: StdioCollector { id: liveOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var raw = String(liveOut.text || "").trim()
+      var raw = root.readBounded(liveOut, root.liveMaxBytes)
+      if (raw === null) raw = "overflow"
       if (raw === "") {
         root.liveStatus = "offline"
         root.startTrail()
@@ -414,7 +447,8 @@ Panel {
     id: trailProc
     stdout: StdioCollector { id: trailOut; waitForEnd: true }
     onExited: function(exitCode) {
-      var parsed = Model.parseTrail(String(trailOut.text || "").trim(), root.nowSeconds)
+      var raw = root.readBounded(trailOut, root.trailMaxBytes)
+      var parsed = raw === null ? null : Model.parseTrail(raw, root.nowSeconds)
       if (!parsed) return
       root.trailLive = parsed.live
       root.trailPoints = parsed.points

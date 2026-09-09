@@ -11,7 +11,7 @@ import qs.Ui
 // percentage of the trip done rides next to it (horizontal bars only).
 BarWidget {
   id: root
-  moduleName: "flight.monitor"
+  moduleName: "io.github.maluta.flight-monitor"
 
   readonly property var panelItem: panelLoader.item
   readonly property string flightCode: panelItem ? panelItem.flightCode : ""
@@ -81,7 +81,7 @@ BarWidget {
   }
 
   IpcHandler {
-    target: "flight.monitor"
+    target: "io.github.maluta.flight-monitor"
 
     function refresh(): void { root.broadcast("refresh") }
     function open(): void { root.open() }

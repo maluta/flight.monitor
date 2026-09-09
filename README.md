@@ -2,7 +2,7 @@
 
 An Omarchy shell bar widget that tracks one flight by its number.
 
-![Flight Monitor popup](docs/screenshot.png)
+![Flight Monitor popup](preview.png)
 
 Click the plane icon in the bar, type a flight number such as `LA3195`
 (or an ICAO callsign such as `TAM3195`) and press Enter. The popup shows:
@@ -40,29 +40,29 @@ omarchy plugin add https://github.com/maluta/flight.monitor.git --enable
 `--enable` places the plane icon in the bar's right section. Move it with:
 
 ```bash
-omarchy bar move flight.monitor --section center
+omarchy bar move io.github.maluta.flight-monitor --section center
 ```
 
 Manual install, without the plugin manager: clone this repository into
-`~/.config/omarchy/plugins/flight.monitor/`, then run
-`omarchy-shell shell rescanPlugins` and `omarchy plugin enable flight.monitor right`.
+`~/.config/omarchy/plugins/io.github.maluta.flight-monitor/`, then run
+`omarchy-shell shell rescanPlugins` and `omarchy plugin enable io.github.maluta.flight-monitor right`.
 
-Update later with `omarchy plugin update flight.monitor`.
+Update later with `omarchy plugin update io.github.maluta.flight-monitor`.
 
 ## Removal
 
 ```bash
-omarchy plugin remove flight.monitor
+omarchy plugin remove io.github.maluta.flight-monitor
 ```
 
 This deletes the plugin directory and takes the widget out of the bar. To
-keep the files but hide the widget, use `omarchy plugin disable flight.monitor`
+keep the files but hide the widget, use `omarchy plugin disable io.github.maluta.flight-monitor`
 instead.
 
 ## What it writes
 
 The only thing the plugin writes is the flight number, into its own layout
-entry in `~/.config/omarchy/shell.json` (`{ "id": "flight.monitor", "flight": "LA3195" }`),
+entry in `~/.config/omarchy/shell.json` (`{ "id": "io.github.maluta.flight-monitor", "flight": "LA3195" }`),
 and only when you press Enter in the field, clear it with ✕, or call the
 `track`/`clear` IPC commands. It never touches any other file, and removing
 the plugin removes that entry with it.
@@ -90,11 +90,11 @@ air the percentage of the trip done sits next to it (horizontal bars).
 ## IPC
 
 ```bash
-omarchy-shell flight.monitor toggle
-omarchy-shell flight.monitor edit             # open with the field focused
-omarchy-shell flight.monitor track LA3195     # start tracking a flight
-omarchy-shell flight.monitor clear
-omarchy-shell flight.monitor refresh
+omarchy-shell io.github.maluta.flight-monitor toggle
+omarchy-shell io.github.maluta.flight-monitor edit             # open with the field focused
+omarchy-shell io.github.maluta.flight-monitor track LA3195     # start tracking a flight
+omarchy-shell io.github.maluta.flight-monitor clear
+omarchy-shell io.github.maluta.flight-monitor refresh
 ```
 
 ## Settings (inline in the bar layout entry)
@@ -128,6 +128,22 @@ one IATA code, so the callsign lookup walks a short candidate list (see
 The Flightradar24 endpoints are unofficial and may change or stop answering
 without notice. When they do, the widget falls back to adsbdb + adsb.lol:
 route and live position still work, but scheduled times and status do not.
+
+## Network and limits
+
+Every request is a plain `curl` over https only, with no redirects, a
+timeout of 8–10 s, and a byte cap enforced before anything is parsed:
+1 MiB for the schedule, 256 KiB for the route, 512 KiB for the live
+position and 4 MiB for the trail. A body over its cap is discarded, not
+truncated and parsed. Arguments reach the shell as positional parameters,
+never spliced into the command text.
+
+Values that come back from the feeds are bounded before they become state:
+strings are cut to 64 characters, coordinates, altitudes, speeds and
+timestamps outside their physical range are dropped, at most 50 schedule
+rows, 200 aircraft and 5000 trail points are read, and anything reused in a
+later URL (hex address, callsign, Flightradar24 flight id) must match a
+strict alphabet or is ignored. All text is rendered as plain text.
 
 ## Files
 

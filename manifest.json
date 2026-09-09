@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "id": "flight.monitor",
+  "id": "io.github.maluta.flight-monitor",
   "name": "Flight Monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "maluta",
   "description": "Track a flight by number: route, live position, altitude, speed and ETA",
   "kinds": [

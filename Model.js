@@ -105,7 +105,7 @@ function splitFlightCode(code) {
 function liveCallsignCandidates(code, route, preferred, schedule) {
   var list = []
   function push(value) {
-    var v = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "")
+    var v = safeCallsign(value)
     if (v !== "" && list.indexOf(v) === -1) list.push(v)
   }
   var parsed = splitFlightCode(code)
@@ -129,17 +129,74 @@ function num(value) {
   return isFinite(n) ? n : null
 }
 
+// ---- Bounds on remote data -----------------------------------------------
+//
+// Everything below comes from public feeds nobody here controls. Strings are
+// capped before they become QML state, coordinates and other numbers are
+// rejected outside their physical range, and anything that ends up in a URL
+// or a process argument is reduced to the exact alphabet it may contain.
+
+var NAME_MAX = 64
+var CODE_MAX = 16
+var SCHEDULE_ROWS_MAX = 50
+var LIVE_AIRCRAFT_MAX = 200
+var TRAIL_POINTS_MAX = 5000
+
+// A plain object, or an empty one so nested lookups never throw.
+function obj(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {}
+}
+
+function str(value, max) {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "object") return ""
+  return String(value).slice(0, max || NAME_MAX)
+}
+
+// A number within [min, max], else null.
+function numIn(value, min, max) {
+  var n = num(value)
+  return n !== null && n >= min && n <= max ? n : null
+}
+
+function latitude(value) { return numIn(value, -90, 90) }
+function longitude(value) { return numIn(value, -180, 180) }
+function altitudeFt(value) { return numIn(value, -2000, 100000) }
+function speedKt(value) { return numIn(value, 0, 2000) }
+function headingDeg(value) { return numIn(value, 0, 360) }
+function verticalFpm(value) { return numIn(value, -20000, 20000) }
+function unixSeconds(value) { return numIn(value, 0, 4102444800) } // up to 2100
+function tzOffsetSeconds(value) { return numIn(value, -50400, 50400) }
+
+// ICAO 24-bit address as adsb.lol keys it: six lowercase hex digits.
+function safeHex(value) {
+  var v = str(value, CODE_MAX).toLowerCase()
+  return /^[0-9a-f]{6}$/.test(v) ? v : ""
+}
+
+// FR24's own flight identifier, an opaque short alphanumeric token.
+function safeFlightId(value) {
+  var v = str(value, CODE_MAX)
+  return /^[0-9a-z]{1,16}$/i.test(v) ? v : ""
+}
+
+// Callsign or airline designator: upper-case letters and digits only.
+function safeCallsign(value) {
+  var v = str(value, CODE_MAX).toUpperCase().replace(/[^A-Z0-9]/g, "")
+  return v.length >= 2 && v.length <= 8 ? v : ""
+}
+
 function parseAirport(raw) {
   if (!raw || typeof raw !== "object") return null
-  var lat = num(raw.latitude)
-  var lon = num(raw.longitude)
+  var lat = latitude(raw.latitude)
+  var lon = longitude(raw.longitude)
   if (lat === null || lon === null) return null
   return {
-    iata: String(raw.iata_code || ""),
-    icao: String(raw.icao_code || ""),
-    name: String(raw.name || ""),
-    city: String(raw.municipality || ""),
-    country: String(raw.country_iso_name || ""),
+    iata: str(raw.iata_code, CODE_MAX),
+    icao: str(raw.icao_code, CODE_MAX),
+    name: str(raw.name),
+    city: str(raw.municipality),
+    country: str(raw.country_iso_name, CODE_MAX),
     lat: lat,
     lon: lon
   }
@@ -155,13 +212,14 @@ function parseRoute(text) {
   var destination = parseAirport(fr.destination)
   if (!origin || !destination) return null
   var airline = fr.airline || {}
+  if (!airline || typeof airline !== "object") airline = {}
   return {
-    callsign: String(fr.callsign || ""),
-    callsignIcao: String(fr.callsign_icao || ""),
-    callsignIata: String(fr.callsign_iata || ""),
-    airlineName: String(airline.name || ""),
-    airlineIcao: String(airline.icao || ""),
-    airlineIata: String(airline.iata || ""),
+    callsign: safeCallsign(fr.callsign),
+    callsignIcao: safeCallsign(fr.callsign_icao),
+    callsignIata: safeCallsign(fr.callsign_iata),
+    airlineName: str(airline.name),
+    airlineIcao: str(airline.icao, CODE_MAX).toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 3),
+    airlineIata: str(airline.iata, CODE_MAX),
     origin: origin,
     destination: destination,
     distanceKm: distanceKm(origin.lat, origin.lon, destination.lat, destination.lon)
@@ -176,27 +234,27 @@ function parseLive(text) {
   var list = parsed && parsed.ac
   if (!Array.isArray(list)) return null
   var best = null
-  for (var i = 0; i < list.length; i++) {
+  for (var i = 0; i < Math.min(list.length, LIVE_AIRCRAFT_MAX); i++) {
     var ac = list[i]
-    if (!ac || num(ac.lat) === null || num(ac.lon) === null) continue
+    if (!ac || typeof ac !== "object" || latitude(ac.lat) === null || longitude(ac.lon) === null) continue
     var seen = num(ac.seen_pos)
     if (seen === null) seen = num(ac.seen)
     if (seen === null) seen = 1e9
     if (!best || seen < best.seenPos) {
       var onGround = ac.alt_baro === "ground"
       best = {
-        hex: String(ac.hex || ""),
-        callsign: String(ac.flight || "").trim(),
-        registration: String(ac.r || ""),
-        type: String(ac.t || ""),
-        lat: num(ac.lat),
-        lon: num(ac.lon),
+        hex: safeHex(ac.hex),
+        callsign: safeCallsign(ac.flight),
+        registration: str(ac.r, CODE_MAX),
+        type: str(ac.t, CODE_MAX),
+        lat: latitude(ac.lat),
+        lon: longitude(ac.lon),
         onGround: onGround,
-        altitudeFt: onGround ? 0 : num(ac.alt_baro),
-        groundSpeedKt: num(ac.gs),
-        track: num(ac.track),
-        verticalRateFpm: num(ac.baro_rate) !== null ? num(ac.baro_rate) : num(ac.geom_rate),
-        seenPos: seen
+        altitudeFt: onGround ? 0 : altitudeFt(ac.alt_baro),
+        groundSpeedKt: speedKt(ac.gs),
+        track: headingDeg(ac.track),
+        verticalRateFpm: verticalFpm(ac.baro_rate) !== null ? verticalFpm(ac.baro_rate) : verticalFpm(ac.geom_rate),
+        seenPos: Math.min(seen, 1e9)
       }
     }
   }
@@ -208,55 +266,55 @@ function parseLive(text) {
 
 function fr24Airport(raw) {
   if (!raw || typeof raw !== "object") return null
-  var pos = raw.position || {}
-  var lat = num(pos.latitude), lon = num(pos.longitude)
+  var pos = obj(raw.position)
+  var lat = latitude(pos.latitude), lon = longitude(pos.longitude)
   if (lat === null || lon === null) return null
-  var code = raw.code || {}
-  var tz = raw.timezone || {}
+  var code = obj(raw.code)
+  var tz = obj(raw.timezone)
   return {
-    iata: String(code.iata || ""),
-    icao: String(code.icao || ""),
-    name: String(raw.name || ""),
-    city: String((pos.region && pos.region.city) || ""),
-    country: String((pos.country && pos.country.code) || ""),
+    iata: str(code.iata, CODE_MAX),
+    icao: str(code.icao, CODE_MAX),
+    name: str(raw.name),
+    city: str(obj(pos.region).city),
+    country: str(obj(pos.country).code, CODE_MAX),
     lat: lat,
     lon: lon,
-    tzOffset: num(tz.offset) !== null ? num(tz.offset) : 0,
-    tzName: String(tz.name || "")
+    tzOffset: tzOffsetSeconds(tz.offset) !== null ? tzOffsetSeconds(tz.offset) : 0,
+    tzName: str(tz.name)
   }
 }
 
 function fr24Instance(raw) {
   if (!raw || typeof raw !== "object") return null
-  var time = raw.time || {}
-  var sched = time.scheduled || {}, est = time.estimated || {}, real = time.real || {}, other = time.other || {}
-  var ident = raw.identification || {}
-  var aircraft = raw.aircraft || {}
-  var status = raw.status || {}
-  var airports = raw.airport || {}
+  var time = obj(raw.time)
+  var sched = obj(time.scheduled), est = obj(time.estimated), real = obj(time.real), other = obj(time.other)
+  var ident = obj(raw.identification)
+  var aircraft = obj(raw.aircraft)
+  var status = obj(raw.status)
+  var airports = obj(raw.airport)
   var origin = fr24Airport(airports.origin)
   var destination = fr24Airport(airports.destination)
   if (!origin || !destination) return null
-  var model = aircraft.model || {}
+  var model = obj(aircraft.model)
   return {
-    number: String((ident.number && ident.number.default) || ""),
-    callsign: String(ident.callsign || ""),
-    flightId: String(ident.id || ""),
-    hex: String(aircraft.hex || "").toLowerCase(),
-    registration: String(aircraft.registration || ""),
-    aircraftModel: String(model.code || ""),
-    aircraftName: String(model.text || ""),
-    statusText: String(status.text || ""),
+    number: str(obj(ident.number).default, CODE_MAX),
+    callsign: safeCallsign(ident.callsign),
+    flightId: safeFlightId(ident.id),
+    hex: safeHex(aircraft.hex),
+    registration: str(aircraft.registration, CODE_MAX),
+    aircraftModel: str(model.code, CODE_MAX),
+    aircraftName: str(model.text),
+    statusText: str(status.text),
     live: status.live === true,
     origin: origin,
     destination: destination,
-    scheduledDeparture: num(sched.departure),
-    scheduledArrival: num(sched.arrival),
-    estimatedDeparture: num(est.departure),
-    estimatedArrival: num(est.arrival),
-    realDeparture: num(real.departure),
-    realArrival: num(real.arrival),
-    eta: num(other.eta)
+    scheduledDeparture: unixSeconds(sched.departure),
+    scheduledArrival: unixSeconds(sched.arrival),
+    estimatedDeparture: unixSeconds(est.departure),
+    estimatedArrival: unixSeconds(est.arrival),
+    realDeparture: unixSeconds(real.departure),
+    realArrival: unixSeconds(real.arrival),
+    eta: unixSeconds(other.eta)
   }
 }
 
@@ -271,7 +329,7 @@ function parseSchedule(text, nowSeconds) {
   if (!Array.isArray(data)) return null
   var now = nowSeconds || Math.floor(Date.now() / 1000)
   var items = []
-  for (var i = 0; i < data.length; i++) {
+  for (var i = 0; i < Math.min(data.length, SCHEDULE_ROWS_MAX); i++) {
     var item = fr24Instance(data[i])
     if (item) items.push(item)
   }
@@ -330,10 +388,11 @@ function parseTrail(text, nowSeconds) {
   var trail = parsed && parsed.trail
   if (!Array.isArray(trail) || trail.length === 0) return null
   var now = nowSeconds || Math.floor(Date.now() / 1000)
+  // trail[0] is the newest point; only the most recent stretch matters.
   var points = []
-  for (var i = trail.length - 1; i >= 0; i--) {
-    var p = trail[i]
-    var lat = num(p && p.lat), lon = num(p && p.lng)
+  for (var i = Math.min(trail.length, TRAIL_POINTS_MAX) - 1; i >= 0; i--) {
+    var p = obj(trail[i])
+    var lat = latitude(p.lat), lon = longitude(p.lng)
     if (lat === null || lon === null) continue
     points.push({ lat: lat, lon: lon })
   }
@@ -344,23 +403,24 @@ function parseTrail(text, nowSeconds) {
   for (var t = 0; t < points.length; t += step) thinned.push(points[t])
   if (thinned[thinned.length - 1] !== points[points.length - 1]) thinned.push(points[points.length - 1])
 
-  var latest = trail[0]
-  var aircraft = parsed.aircraft || {}
-  var ident = parsed.identification || {}
-  var alt = num(latest.alt)
-  var ts = num(latest.ts)
+  var latest = obj(trail[0])
+  if (latitude(latest.lat) === null || longitude(latest.lng) === null) return null
+  var aircraft = obj(parsed.aircraft)
+  var ident = obj(parsed.identification)
+  var alt = altitudeFt(latest.alt)
+  var ts = unixSeconds(latest.ts)
   return {
     live: {
-      hex: String(aircraft.hex || "").toLowerCase(),
-      callsign: String(ident.callsign || ""),
-      registration: String(aircraft.registration || ""),
-      type: String((aircraft.model && aircraft.model.code) || ""),
-      lat: num(latest.lat),
-      lon: num(latest.lng),
+      hex: safeHex(aircraft.hex),
+      callsign: safeCallsign(ident.callsign),
+      registration: str(aircraft.registration, CODE_MAX),
+      type: str(obj(aircraft.model).code, CODE_MAX),
+      lat: latitude(latest.lat),
+      lon: longitude(latest.lng),
       onGround: alt !== null && alt <= 0,
       altitudeFt: alt,
-      groundSpeedKt: num(latest.spd),
-      track: num(latest.hd),
+      groundSpeedKt: speedKt(latest.spd),
+      track: headingDeg(latest.hd),
       verticalRateFpm: null,
       seenPos: ts !== null ? Math.max(0, now - ts) : 0,
       source: "fr24"
