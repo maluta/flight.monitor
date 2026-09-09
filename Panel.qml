@@ -123,10 +123,12 @@ Panel {
 
   // ---- Open / close ------------------------------------------------------
 
+  // Show and hide come first: the reveal flag is cosmetic and must never
+  // keep the panel from opening or closing.
   function open() {
     openedFromHotkey = false
-    setCenterHoverRevealSuppressed(false)
     root.controller.show()
+    setCenterHoverRevealSuppressed(false)
     afterOpen()
   }
 
@@ -151,9 +153,9 @@ Panel {
   }
 
   function close() {
-    setCenterHoverRevealSuppressed(false)
-    root.fieldError = ""
     root.controller.hide()
+    root.fieldError = ""
+    setCenterHoverRevealSuppressed(false)
   }
 
   function toggle() {
@@ -167,8 +169,12 @@ Panel {
     return false
   }
 
+  // Third-party widgets get a PluginBarApi facade, where the flag is read-only
+  // and writes go through a method; the shell's own panels see the real Bar.
   function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && "centerHoverRevealSuppressed" in root.bar)
+    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
+      root.bar.setCenterHoverRevealSuppressed(value)
+    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
   }
 
